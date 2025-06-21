@@ -1,52 +1,36 @@
-
 import streamlit as st
-from collections import Counter
-import docx
+import fitz  # PyMuPDF
 import re
-from io import BytesIO
-from docx import Document
+import json
 
-st.title("تحليل الكلمات القانونية الإدارية في ملفات Word")
+st.title("تحديد موضوع الحكم من ملفات PDF")
 
-uploaded_files = st.file_uploader("ارفع ملفات Word (DOCX)", type=["docx"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("ارفع ملفات PDF", type=["pdf"], accept_multiple_files=True)
 
-# قائمة الكلمات القانونية في القضاء الإداري فقط
-admin_keywords = ['قرار', 'إلغاء', 'تعيين', 'ترقية', 'موظف', 'وظيفة', 'وزارة', 'جهة', 'جهة إدارية', 'جهة حكومية', 'مجلس', 'لجنة', 'صلاحية', 'اختصاص', 'وظيفي', 'خدمة', 'وظيفة عامة', 'تعسف', 'سلطة تقديرية', 'دعوى إدارية', 'نزاع إداري', 'لائحة', 'قانون الخدمة', 'مخالفة إدارية', 'جزاء', 'توقيف', 'إعفاء', 'استقالة', 'إحالة', 'تقاعد', 'تعويض', 'مسؤولية إدارية', 'توجيه', 'خطاب', 'عزل', 'إنهاء', 'توصية', 'تكليف', 'تفويض', 'ترخيص', 'إذن', 'نظام', 'إدارة', 'هيئة', 'مؤسسة', 'انتداب', 'ندب', 'عقد إداري', 'مناقصة', 'مناقصات', 'مناقصة عامة', 'استبعاد', 'لجنة مناقصات', 'جهة رقابية', 'رقابة', 'تفتيش', 'رقابة إدارية', 'ديوان المظالم', 'محكمة إدارية', 'هيئة قضاء إداري', 'قرار نهائي', 'قرار ابتدائي']
+subject_keywords = json.loads("{\"تجارية\": [\"شركة\", \"شراكة\", \"فاتورة\", \"توريد\", \"عقد تجاري\", \"وكالة تجارية\", \"أتعاب\", \"مقاولة\", \"عمولة\", \"سعي\", \"سمسرة\", \"مبلغ مالي\", \"مطالبة مالية\"], \"مدنية\": [\"ملكية\", \"حيازة\", \"عقار\", \"دعوى صحة توقيع\", \"دعوى صحة ونفاذ\", \"دعوى تمكين\", \"دعوى إخلاء\", \"تسليم عقار\"], \"أحوال شخصية\": [\"حضانة\", \"نفقة\", \"طلاق\", \"رجعة\", \"عدة\", \"زواج\", \"نسب\", \"ولاية\", \"متعة\", \"مهر\"], \"إيجارات\": [\"عقد إيجار\", \"إخلاء\", \"مستأجر\", \"مؤجر\", \"أجرة\", \"مدة الإيجار\"], \"إدارية\": [\"موظف\", \"قرار إداري\", \"إلغاء قرار\", \"جهة إدارية\", \"خدمة مدنية\", \"ترقية\", \"عزل\", \"تعيين\", \"الوظيفة العامة\"], \"جنائية\": [\"قتل\", \"سرقة\", \"تزوير\", \"احتيال\", \"جريمة\", \"عقوبة\", \"حبس\", \"سجن\", \"قانون العقوبات\"]}")
+
+def extract_text_from_pdf(file):
+    with fitz.open(stream=file.read(), filetype="pdf") as doc:
+        text = ""
+        for page in doc:
+            text += page.get_text()
+    return text
+
+def detect_subject(text):
+    scores = dict()
+    for subject in subject_keywords:
+        scores[subject] = 0
+        for kw in subject_keywords[subject]:
+            pattern = re.escape(kw)
+            matches = re.findall(pattern, text)
+            scores[subject] += len(matches)
+    top_subject = max(scores, key=scores.get)
+    if scores[top_subject] == 0:
+        return "غير معروف"
+    return top_subject
 
 if uploaded_files:
-    all_results = []
-    for uploaded_file in uploaded_files:
-        doc = docx.Document(uploaded_file)
-        full_text = " ".join([para.text for para in doc.paragraphs])
-        cleaned_text = re.sub(r'[^؀-ۿ\s]', '', full_text)
-        words = cleaned_text.split()
-        legal_words = [w for w in words if w in admin_keywords]
-        word_counts = Counter(legal_words)
-        top_words = word_counts.most_common(10)
-
-        st.write(f"**أكثر الكلمات القانونية الإدارية تكرارًا في الملف {uploaded_file.name}:**")
-        for word, count in top_words:
-            st.write(f"- {word}: {count} مرة")
-
-        result_text = f"نتائج الملف: {uploaded_file.name}\n"
-        for word, count in top_words:
-            result_text += f"- {word}: {count} مرة\n"
-        result_text += "\n"
-        all_results.append(result_text)
-
-    if st.button("تحميل النتائج في ملف Word"):
-        export_doc = Document()
-        export_doc.add_heading("نتائج الكلمات القانونية الإدارية", level=1)
-        for result in all_results:
-            export_doc.add_paragraph(result)
-
-        buffer = BytesIO()
-        export_doc.save(buffer)
-        buffer.seek(0)
-
-        st.download_button(
-            label="اضغط هنا لتحميل النتائج",
-            data=buffer,
-            file_name="تحليل_القضاء_الاداري.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+    for file in uploaded_files:
+        text = extract_text_from_pdf(file)
+        subject = detect_subject(text)
+        st.write(f"📄 {file.name} → 🏷️ موضوع الحكم: **{subject}**")
